@@ -1,7 +1,17 @@
-public class UseCase1HotelBookingApp {
+public abstract class Room {
+    protected int numberOfBeds;
+    protected int squareFeet;
+    protected double pricePerNight;
 
-    public static void main(String[] args) {
-        System.out.println("Welcome to the Hotel Booking Management System");
-        System.out.println("System initialized successfully.");
+    public Room(int numberOfBeds, int squareFeet, double pricePerNight) {
+        this.numberOfBeds = numberOfBeds;
+        this.squareFeet = squareFeet;
+        this.pricePerNight = pricePerNight;
+    }
+
+    public void displayRoomDetails() {
+        System.out.println("Beds: " + numberOfBeds);
+        System.out.println("Size: " + squareFeet + " sqft");
+        System.out.println("Price per night: " + pricePerNight);
     }
 }
