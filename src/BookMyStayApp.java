@@ -24,12 +24,6 @@ abstract class Room {
         this.squareFeet = squareFeet;
         this.pricePerNight = pricePerNight;
     }
-
-    public void displayRoomDetails() {
-        System.out.println("Beds: " + numberOfBeds);
-        System.out.println("Size: " + squareFeet + " sqft");
-        System.out.println("Price per night: " + pricePerNight);
-    }
 }
 
 class SingleRoom extends Room {
@@ -54,15 +48,19 @@ class RoomInventory {
         roomAvailability.put("Suite", 2);
     }
 
-    public Map<String, Integer> getRoomAvailability() {
-        return roomAvailability;
+    public synchronized Map<String, Integer> getRoomAvailability() {
+        return new HashMap<>(roomAvailability);
     }
 
-    public void updateAvailability(String roomType, int count) throws BookingException {
+    public synchronized void updateAvailability(String roomType, int count) throws BookingException {
         if (count < 0) {
             throw new BookingException("Inventory error: Cannot have negative rooms.");
         }
         roomAvailability.put(roomType, count);
+    }
+
+    public synchronized int getCount(String type) {
+        return roomAvailability.getOrDefault(type, 0);
     }
 }
 
@@ -84,54 +82,32 @@ class Reservation {
 
 class BookingRequestQueue {
     private Queue<Reservation> requestQueue = new LinkedList<Reservation>();
-    public void addRequest(Reservation reservation) { requestQueue.offer(reservation); }
-    public Reservation getNextRequest() { return requestQueue.poll(); }
-    public boolean hasPendingRequests() { return !requestQueue.isEmpty(); }
+
+    public synchronized void addRequest(Reservation reservation) {
+        requestQueue.offer(reservation);
+    }
+
+    public synchronized Reservation getNextRequest() {
+        return requestQueue.poll();
+    }
+
+    public synchronized boolean hasPendingRequests() {
+        return !requestQueue.isEmpty();
+    }
 }
 
 class BookingHistory {
     private List<Reservation> history = new ArrayList<Reservation>();
-    public void recordBooking(Reservation reservation) { history.add(reservation); }
-    public void removeBooking(Reservation reservation) { history.remove(reservation); }
-    public List<Reservation> getHistory() { return history; }
-}
-
-class BookingValidator {
-    public void validateRequest(Reservation reservation, RoomInventory inventory) throws BookingException {
-        if (reservation.getGuestName() == null || reservation.getGuestName().trim().isEmpty()) {
-            throw new BookingException("Guest name cannot be empty.");
-        }
-        if (!inventory.getRoomAvailability().containsKey(reservation.getRoomType())) {
-            throw new BookingException("Invalid room type.");
-        }
-    }
-}
-
-class BookingCancellationService {
-    private Stack<String> releasedRoomIds = new Stack<String>();
-
-    public void cancelBooking(Reservation reservation, RoomInventory inventory, BookingHistory history) throws BookingException {
-        if (reservation.getRoomId() == null) {
-            throw new BookingException("Cannot cancel a reservation without a room ID.");
-        }
-
-        String type = reservation.getRoomType();
-        int currentCount = inventory.getRoomAvailability().get(type);
-
-        releasedRoomIds.push(reservation.getRoomId());
-        inventory.updateAvailability(type, currentCount + 1);
-        history.removeBooking(reservation);
-
-        System.out.println("CANCELLATION: Released " + reservation.getRoomId() + " for " + reservation.getGuestName());
-    }
+    public synchronized void recordBooking(Reservation reservation) { history.add(reservation); }
+    public synchronized List<Reservation> getHistory() { return new ArrayList<>(history); }
 }
 
 class RoomAllocationService {
     private Map<String, Integer> typeCounter = new HashMap<String, Integer>();
 
-    public String allocateRoom(Reservation reservation, RoomInventory inventory) throws BookingException {
+    public synchronized String allocateRoom(Reservation reservation, RoomInventory inventory) throws BookingException {
         String type = reservation.getRoomType();
-        int currentCount = inventory.getRoomAvailability().get(type);
+        int currentCount = inventory.getCount(type);
 
         if (currentCount <= 0) {
             throw new BookingException("No availability for " + type);
@@ -149,36 +125,52 @@ class RoomAllocationService {
 
 public class BookMyStayApp {
     public static void main(String[] args) {
-        System.out.println("BookMyStay App - Use Case 10: Cancellation\n");
+        System.out.println("BookMyStay App - Use Case 11: Multi-threaded Simulation\n");
 
         RoomInventory inventory = new RoomInventory();
         BookingRequestQueue queue = new BookingRequestQueue();
         RoomAllocationService allocationService = new RoomAllocationService();
         BookingHistory history = new BookingHistory();
-        BookingValidator validator = new BookingValidator();
-        BookingCancellationService cancellationService = new BookingCancellationService();
 
-        Reservation res1 = new Reservation("Abhi", "Single");
-        queue.addRequest(res1);
+        queue.addRequest(new Reservation("Thread-User-1", "Single"));
+        queue.addRequest(new Reservation("Thread-User-2", "Single"));
+        queue.addRequest(new Reservation("Thread-User-3", "Single"));
+        queue.addRequest(new Reservation("Thread-User-4", "Single"));
+        queue.addRequest(new Reservation("Thread-User-5", "Single"));
+        queue.addRequest(new Reservation("Thread-User-6", "Single")); // This should fail (only 5 rooms)
+
+        Runnable processor = () -> {
+            while (true) {
+                Reservation request;
+                synchronized (queue) {
+                    if (!queue.hasPendingRequests()) break;
+                    request = queue.getNextRequest();
+                }
+
+                try {
+                    String id = allocationService.allocateRoom(request, inventory);
+                    history.recordBooking(request);
+                    System.out.println(Thread.currentThread().getName() + " SUCCESS: " + request.getGuestName() + " -> " + id);
+                } catch (BookingException e) {
+                    System.out.println(Thread.currentThread().getName() + " FAILED: " + e.getMessage());
+                }
+            }
+        };
+
+        Thread t1 = new Thread(processor, "Processor-1");
+        Thread t2 = new Thread(processor, "Processor-2");
+
+        t1.start();
+        t2.start();
 
         try {
-            while (queue.hasPendingRequests()) {
-                Reservation req = queue.getNextRequest();
-                validator.validateRequest(req, inventory);
-                String id = allocationService.allocateRoom(req, inventory);
-                history.recordBooking(req);
-                System.out.println("ALLOCATED: " + req.getGuestName() + " -> " + id);
-            }
-
-            System.out.println("Availability before cancellation: " + inventory.getRoomAvailability());
-
-            cancellationService.cancelBooking(res1, inventory, history);
-
-            System.out.println("Availability after cancellation: " + inventory.getRoomAvailability());
-            System.out.println("History count: " + history.getHistory().size());
-
-        } catch (BookingException e) {
-            System.out.println("ERROR: " + e.getMessage());
+            t1.join();
+            t2.join();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
         }
+
+        System.out.println("\nFinal Inventory: " + inventory.getRoomAvailability());
+        System.out.println("Total Successful Bookings: " + history.getHistory().size());
     }
 }
