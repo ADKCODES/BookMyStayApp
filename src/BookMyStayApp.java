@@ -41,7 +41,7 @@ class RoomInventory {
     private Map<String, Integer> roomAvailability;
 
     public RoomInventory() {
-        roomAvailability = new HashMap<>();
+        this.roomAvailability = new HashMap<String, Integer>();
         initializeInventory();
     }
 
@@ -84,7 +84,7 @@ class RoomSearchService {
     }
 }
 
-public class BookMyShowApp {
+public class BookMyStayApp {
     public static void main(String[] args) {
         System.out.println("Welcome to the Hotel Booking Management System");
         System.out.println("System initialized successfully.");
@@ -100,4 +100,4 @@ public class BookMyShowApp {
         System.out.println("Room Search\n");
         searchService.searchAvailableRooms(inventory, single, doubleRoom, suite);
     }
-}
+}}
