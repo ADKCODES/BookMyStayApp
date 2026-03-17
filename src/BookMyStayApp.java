@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
+import java.util.Stack;
 
 class BookingException extends Exception {
     public BookingException(String message) {
@@ -59,7 +60,7 @@ class RoomInventory {
 
     public void updateAvailability(String roomType, int count) throws BookingException {
         if (count < 0) {
-            throw new BookingException("Inventory error: Cannot have negative rooms for " + roomType);
+            throw new BookingException("Inventory error: Cannot have negative rooms.");
         }
         roomAvailability.put(roomType, count);
     }
@@ -91,35 +92,54 @@ class BookingRequestQueue {
 class BookingHistory {
     private List<Reservation> history = new ArrayList<Reservation>();
     public void recordBooking(Reservation reservation) { history.add(reservation); }
+    public void removeBooking(Reservation reservation) { history.remove(reservation); }
     public List<Reservation> getHistory() { return history; }
 }
 
 class BookingValidator {
     public void validateRequest(Reservation reservation, RoomInventory inventory) throws BookingException {
         if (reservation.getGuestName() == null || reservation.getGuestName().trim().isEmpty()) {
-            throw new BookingException("Validation Failed: Guest name cannot be empty.");
+            throw new BookingException("Guest name cannot be empty.");
         }
         if (!inventory.getRoomAvailability().containsKey(reservation.getRoomType())) {
-            throw new BookingException("Validation Failed: Invalid room type '" + reservation.getRoomType() + "'.");
-        }
-        if (inventory.getRoomAvailability().get(reservation.getRoomType()) <= 0) {
-            throw new BookingException("Availability Failed: No " + reservation.getRoomType() + " rooms left.");
+            throw new BookingException("Invalid room type.");
         }
     }
 }
 
+class BookingCancellationService {
+    private Stack<String> releasedRoomIds = new Stack<String>();
+
+    public void cancelBooking(Reservation reservation, RoomInventory inventory, BookingHistory history) throws BookingException {
+        if (reservation.getRoomId() == null) {
+            throw new BookingException("Cannot cancel a reservation without a room ID.");
+        }
+
+        String type = reservation.getRoomType();
+        int currentCount = inventory.getRoomAvailability().get(type);
+
+        releasedRoomIds.push(reservation.getRoomId());
+        inventory.updateAvailability(type, currentCount + 1);
+        history.removeBooking(reservation);
+
+        System.out.println("CANCELLATION: Released " + reservation.getRoomId() + " for " + reservation.getGuestName());
+    }
+}
+
 class RoomAllocationService {
-    private Set<String> allocatedRoomIds = new HashSet<String>();
-    private Map<String, Set<String>> assignedRoomsByType = new HashMap<String, Set<String>>();
+    private Map<String, Integer> typeCounter = new HashMap<String, Integer>();
 
     public String allocateRoom(Reservation reservation, RoomInventory inventory) throws BookingException {
         String type = reservation.getRoomType();
         int currentCount = inventory.getRoomAvailability().get(type);
 
-        String roomId = type + "-" + (assignedRoomsByType.getOrDefault(type, new HashSet<String>()).size() + 1);
-        allocatedRoomIds.add(roomId);
-        assignedRoomsByType.putIfAbsent(type, new HashSet<String>());
-        assignedRoomsByType.get(type).add(roomId);
+        if (currentCount <= 0) {
+            throw new BookingException("No availability for " + type);
+        }
+
+        int nextId = typeCounter.getOrDefault(type, 0) + 1;
+        typeCounter.put(type, nextId);
+        String roomId = type + "-" + nextId;
 
         inventory.updateAvailability(type, currentCount - 1);
         reservation.setRoomId(roomId);
@@ -129,31 +149,36 @@ class RoomAllocationService {
 
 public class BookMyStayApp {
     public static void main(String[] args) {
-        System.out.println("BookMyStay App - Use Case 9: Error Handling\n");
+        System.out.println("BookMyStay App - Use Case 10: Cancellation\n");
 
         RoomInventory inventory = new RoomInventory();
         BookingRequestQueue queue = new BookingRequestQueue();
         RoomAllocationService allocationService = new RoomAllocationService();
-        BookingHistory bookingHistory = new BookingHistory();
+        BookingHistory history = new BookingHistory();
         BookingValidator validator = new BookingValidator();
+        BookingCancellationService cancellationService = new BookingCancellationService();
 
-        queue.addRequest(new Reservation("Abhi", "Single"));
-        queue.addRequest(new Reservation("", "Double")); // Invalid Name
-        queue.addRequest(new Reservation("Subha", "Penthouse")); // Invalid Type
-        queue.addRequest(new Reservation("Vanmathi", "Suite"));
+        Reservation res1 = new Reservation("Abhi", "Single");
+        queue.addRequest(res1);
 
-        while (queue.hasPendingRequests()) {
-            Reservation request = queue.getNextRequest();
-            try {
-                validator.validateRequest(request, inventory);
-                String roomId = allocationService.allocateRoom(request, inventory);
-                bookingHistory.recordBooking(request);
-                System.out.println("SUCCESS: " + request.getGuestName() + " assigned " + roomId);
-            } catch (BookingException e) {
-                System.out.println("ERROR: " + e.getMessage());
+        try {
+            while (queue.hasPendingRequests()) {
+                Reservation req = queue.getNextRequest();
+                validator.validateRequest(req, inventory);
+                String id = allocationService.allocateRoom(req, inventory);
+                history.recordBooking(req);
+                System.out.println("ALLOCATED: " + req.getGuestName() + " -> " + id);
             }
-        }
 
-        System.out.println("\nFinal Verified History Size: " + bookingHistory.getHistory().size());
+            System.out.println("Availability before cancellation: " + inventory.getRoomAvailability());
+
+            cancellationService.cancelBooking(res1, inventory, history);
+
+            System.out.println("Availability after cancellation: " + inventory.getRoomAvailability());
+            System.out.println("History count: " + history.getHistory().size());
+
+        } catch (BookingException e) {
+            System.out.println("ERROR: " + e.getMessage());
+        }
     }
 }
